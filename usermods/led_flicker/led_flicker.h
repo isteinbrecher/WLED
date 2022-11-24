@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wled.h"
+#include <random>
 
 /*
  * @brief Let a led flicker to "simulate" a broken led.
@@ -14,6 +15,26 @@ class UsermodLedFlicker : public Usermod
 
     //! Led ID that should flicker
     unsigned int led_id_;
+
+    //! Distributions
+    float on_mean_;
+    float on_deviation_;
+    float off_mean_;
+    float off_deviation_;
+    std::normal_distribution<float> distribution_on_;
+    std::normal_distribution<float> distribution_off_;
+
+    //! Random number generators
+    std::random_device rd_{};
+    std::mt19937 gen_{rd_()};
+
+    //! If the flicker is on or off
+    bool is_on_ = false;
+
+    //! Switching times
+    unsigned long last_switch_ = 0;
+    unsigned long next_switch_ = ULONG_MAX;
+    unsigned long blink_min_time = 50;
 
    public:
     /*
@@ -132,6 +153,11 @@ class UsermodLedFlicker : public Usermod
         JsonObject top = root.createNestedObject("Led flicker usermod");
         top["active"] = activated_;
         top["led ID"] = led_id_;
+
+        top["ON mean"] = on_mean_;
+        top["ON standard deviation"] = on_deviation_;
+        top["OFF mean"] = off_mean_;
+        top["OFF standard deviation"] = off_deviation_;
     }
 
     /*
@@ -167,6 +193,19 @@ class UsermodLedFlicker : public Usermod
         configComplete &= getJsonValue(top["active"], activated_, false);
         configComplete &= getJsonValue(top["led ID"], led_id_, 0);
 
+        configComplete &= getJsonValue(top["ON mean"], on_mean_, 1.0);
+        configComplete &= getJsonValue(top["ON standard deviation"], on_deviation_, 0.2);
+        configComplete &= getJsonValue(top["OFF mean"], off_mean_, 0.4);
+        configComplete &= getJsonValue(top["OFF standard deviation"], off_deviation_, 0.3);
+
+        distribution_on_ = std::normal_distribution<float>{1000 * on_mean_, 1000 * on_deviation_};
+        distribution_off_ = std::normal_distribution<float>{1000 * off_mean_, 1000 * off_deviation_};
+
+        if (activated_)
+        {
+            SwitchOnOff();
+        }
+
         return configComplete;
     }
 
@@ -180,7 +219,14 @@ class UsermodLedFlicker : public Usermod
     {
         if (activated_)
         {
-            strip.setPixelColor(led_id_, RGBW32(0, 0, 0, 0));
+            if (!is_on_)
+            {
+                strip.setPixelColor(led_id_, RGBW32(0, 0, 0, 0));
+            }
+            if (millis() >= next_switch_)
+            {
+                SwitchOnOff();
+            }
         }
     }
 
@@ -192,6 +238,23 @@ class UsermodLedFlicker : public Usermod
     uint16_t getId()
     {  // TODO: change this in the future
         return USERMOD_ID_EXAMPLE;
+    }
+
+    void SwitchOnOff()
+    {
+        is_on_ = !is_on_;
+        unsigned long switch_time;
+        if (is_on_)
+        {
+            switch_time = std::round(distribution_on_(gen_));
+        }
+        else
+        {
+            switch_time = std::round(distribution_off_(gen_));
+        }
+
+        switch_time = std::max(switch_time, blink_min_time);
+        next_switch_ = millis() + switch_time;
     }
 
     // More methods can be added in the future, this example will then be extended.
